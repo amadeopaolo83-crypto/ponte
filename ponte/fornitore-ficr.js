@@ -10,8 +10,14 @@
 // e' l'elenco dei concorrenti. Campi usati di ogni concorrente:
 //   b numero   c nome   y classe   r posizione   j giri   h ultimo giro
 //   m miglior giro   s distacco   t intervallo   q ordine di passaggio
-// Nelle qualifiche s e t seguono l'ordine di passaggio sul traguardo (q), non
-// la classifica: per questo l'app, in qualifica, usa il miglior giro.
+//
+// ATTENZIONE alle due posizioni: r e' l'ordine per MIGLIOR GIRO, q e' l'ordine di
+// passaggio sul traguardo, cioe' la posizione in gara (verificato su una gara a
+// Trapani: la vettura col giro piu' veloce ha r=1 ma e' seconda, q=2, e la pagina
+// la mostra seconda). La posizione che la pagina mostra e' quindi:
+//   qualifiche e prove -> r (miglior giro)
+//   gara               -> q (ordine in gara)
+// In gara s e t (distacco e intervallo) seguono q e tornano fra loro.
 
 const BASE = (process.env.FICR_BASE || "https://www.livetiming.ficr.it").replace(/\/+$/, "");
 const HOST_AMMESSI = new Set(["www.livetiming.ficr.it", "livetiming.ficr.it"]);
@@ -119,10 +125,19 @@ function testoGap(t) {
 function normalizza(slug, codice, dati) {
   const header = dati.find((x) => x && !Array.isArray(x) && typeof x === "object") || {};
   const righe = dati.find(Array.isArray) || [];
+  const tipo = tipoSessione(header);
+  // La posizione e' quella che mostra la pagina: in gara l'ordine di passaggio (q),
+  // in qualifica il miglior giro (r). Se manca q in gara si ripiega su r.
+  const posizione = (r) => {
+    const q = parseInt(r.q, 10);
+    const miglior = parseInt(r.r, 10);
+    return tipo === "gara" && Number.isFinite(q) ? q : miglior;
+  };
   const piloti = righe
-    .filter((r) => r && typeof r === "object" && Number.isFinite(parseInt(r.r, 10)))
+    .filter((r) => r && typeof r === "object" && Number.isFinite(posizione(r)))
     .map((r) => ({
-      pos: parseInt(r.r, 10),
+      pos: posizione(r),
+      posMigliorGiro: Number.isFinite(parseInt(r.r, 10)) ? parseInt(r.r, 10) : null,
       numero: String(r.b == null ? "" : r.b).trim(),
       nome: String(r.c || "").trim(),
       classe: String(r.y || "").trim(),
@@ -146,7 +161,7 @@ function normalizza(slug, codice, dati) {
       luogo: String(header.r || "").trim(),
     },
     sessione: {
-      tipo: tipoSessione(header),
+      tipo,
       nome: String(header.c || "").trim(),
       categoria: String(header.d || "").trim(),
       bandiera: String(header.m || "").trim(),
