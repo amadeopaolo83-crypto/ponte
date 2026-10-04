@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PitPonte</title>
+<style>
+  body{margin:0;padding:16px;background:#0B0D0F;color:#E9EDEF;font-family:system-ui,sans-serif;font-size:15px;}
+  h1{font-size:20px;margin:0 0 4px;} .m{color:#8A9199;font-size:13px;margin:0 0 14px;}
+  label{display:block;font-size:12px;color:#8A9199;margin:12px 0 4px;text-transform:uppercase;letter-spacing:.06em;}
+  input{width:100%;box-sizing:border-box;background:#1C2024;border:1px solid #262B30;color:#E9EDEF;border-radius:8px;padding:10px;font-size:15px;}
+  .r{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;}
+  button{flex:1;min-width:120px;background:#1C2024;border:1px solid #262B30;color:#E9EDEF;border-radius:8px;padding:11px;font-size:14px;}
+  button.p{background:#F5C518;color:#0B0D0F;border-color:#F5C518;font-weight:600;}
+  pre{background:#14171A;border:1px solid #262B30;border-radius:8px;padding:10px;overflow:auto;max-height:55vh;font-size:12px;white-space:pre-wrap;word-break:break-word;}
+  table{border-collapse:collapse;width:100%;font-size:13px;} td,th{padding:4px 6px;border-bottom:1px solid #262B30;text-align:left;}
+  .ok{color:#3ECF6E;} .no{color:#E63946;}
+</style>
+</head>
+<body>
+<h1>PitPonte</h1>
+<p class="m">Prova qui cosa vede il ponte, e copia i dati da mandare in chat.</p>
+
+<label for="token">Token del ponte</label>
+<input id="token" type="password" autocomplete="off" placeholder="BRIDGE_TOKEN">
+<label for="evento">Indirizzo dell'evento</label>
+<input id="evento" type="url" autocomplete="off" autocapitalize="off" placeholder="https://www.livetiming.ficr.it/cronoferrara/">
+<label for="numero">Numero di gara (facoltativo)</label>
+<input id="numero" inputmode="numeric" autocomplete="off" placeholder="es. 315">
+
+<div class="r">
+  <button class="p" onclick="classifica()">Leggi classifica</button>
+  <button onclick="grezzo()">Dati grezzi</button>
+  <button onclick="sorgente()">Sorgente pagina</button>
+</div>
+<div class="r"><button onclick="copia()">Copia il risultato</button><button onclick="fornitori()">Traduttori</button></div>
+
+<p id="stato" class="m"></p>
+<div id="tab"></div>
+<pre id="out">Il risultato compare qui.</pre>
+
+<script>
+const $ = (id) => document.getElementById(id);
+$('token').value = localStorage.getItem('pp_token') || '';
+$('evento').value = localStorage.getItem('pp_evento') || '';
+$('numero').value = localStorage.getItem('pp_numero') || '';
+
+function salva(){
+  localStorage.setItem('pp_token', $('token').value.trim());
+  localStorage.setItem('pp_evento', $('evento').value.trim());
+  localStorage.setItem('pp_numero', $('numero').value.trim());
+}
+async function chiama(percorso, parametri){
+  salva();
+  const q = new URLSearchParams(parametri).toString();
+  const t = $('token').value.trim();
+  $('stato').textContent = 'Attendo la risposta (se il ponte dormiva può servire un minuto)…';
+  const r = await fetch(percorso + (q ? '?' + q : ''), { headers: t ? { Authorization: 'Bearer ' + t } : {} });
+  $('stato').textContent = 'Risposta: ' + r.status;
+  return r;
+}
+function mostra(testo){ $('out').textContent = testo; }
+function formatta(s){ if(s==null) return '—'; const m=Math.floor(s/60); const r=(s-m*60).toFixed(3).padStart(6,'0'); return m? m+':'+r : (+s).toFixed(3); }
+
+async function classifica(){
+  $('tab').innerHTML = '';
+  try{
+    const r = await chiama('/api/classifica', { evento: $('evento').value.trim() });
+    const d = await r.json();
+    mostra(JSON.stringify(d, null, 1).slice(0, 20000));
+    if(!d.ok){ $('stato').innerHTML = '<span class="no">' + (d.messaggio || d.code || 'errore') + '</span>'; return; }
+    const s = d.sessione || {};
+    $('stato').innerHTML = '<span class="ok">Fornitore ' + d.fornitore + '</span> · ' + (d.evento.nome||d.evento.id) + ' · ' + (s.nome||'') + ' ' + (s.categoria||'') + ' · ' + (s.tipo||'') + (s.bandiera? ' · bandiera '+s.bandiera : '') + ' · ' + d.piloti.length + ' piloti';
+    const n = $('numero').value.trim();
+    const righe = d.piloti.filter(p => !n || p.numero === n || Math.abs(p.pos - ((d.piloti.find(x=>x.numero===n)||{}).pos||-99)) <= 1);
+    $('tab').innerHTML = '<table><tr><th>pos</th><th>n.</th><th>nome</th><th>miglior</th><th>interv.</th></tr>' +
+      righe.slice(0,12).map(p => '<tr><td>'+p.pos+'</td><td>'+p.numero+'</td><td>'+p.nome+'</td><td>'+formatta(p.migliorGiro)+'</td><td>'+(p.intervallo!=null?formatta(p.intervallo):(p.intervalloTesto||'—'))+'</td></tr>').join('') + '</table>';
+  }catch(e){ mostra('Errore: ' + e.message); }
+}
+async function grezzo(){
+  try{ const r = await chiama('/api/grezzo', { evento: $('evento').value.trim() }); mostra((await r.text()).slice(0, 60000)); }
+  catch(e){ mostra('Errore: ' + e.message); }
+}
+async function sorgente(){
+  try{ const r = await chiama('/api/sorgente', { url: $('evento').value.trim() }); mostra(await r.text()); }
+  catch(e){ mostra('Errore: ' + e.message); }
+}
+async function fornitori(){
+  try{ const r = await chiama('/api/fornitori', {}); mostra(JSON.stringify(await r.json(), null, 1)); }
+  catch(e){ mostra('Errore: ' + e.message); }
+}
+async function copia(){
+  try{ await navigator.clipboard.writeText($('out').textContent); $('stato').textContent = 'Copiato.'; }
+  catch(e){ $('stato').textContent = 'Copia non riuscita: seleziona il testo a mano.'; }
+}
+</script>
+</body>
+</html>

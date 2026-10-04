@@ -1,0 +1,12 @@
+{
+  "name": "pitponte",
+  "version": "1.0.0",
+  "description": "Ponte tra i siti di live timing e PitComm: traduce ogni fornitore in un'unica classifica",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18 <25"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}
