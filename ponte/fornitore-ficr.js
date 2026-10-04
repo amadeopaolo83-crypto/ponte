@@ -8,8 +8,9 @@
 //
 // La risposta e' una lista: il primo elemento descrive la sessione, il secondo
 // e' l'elenco dei concorrenti. Campi usati di ogni concorrente:
-//   b numero   c nome   y classe   r posizione   j giri   h ultimo giro
-//   m miglior giro   s distacco   t intervallo   q ordine di passaggio
+//   b numero   c nome   y classe (la scritta gialla sotto il nome)   r posizione
+//   j giri   h ultimo giro   m miglior giro   p tempo totale   s distacco
+//   t intervallo   u giri di ritardo   q ordine di passaggio
 //
 // ATTENZIONE alle due posizioni: r e' l'ordine per MIGLIOR GIRO, q e' l'ordine di
 // passaggio sul traguardo, cioe' la posizione in gara (verificato su una gara a
@@ -18,6 +19,8 @@
 //   qualifiche e prove -> r (miglior giro)
 //   gara               -> q (ordine in gara)
 // In gara s e t (distacco e intervallo) seguono q e tornano fra loro.
+// Per i doppiati s e t valgono "--" e il sito scrive "N giri": N sta nel campo u
+// (giri di ritardo dal primo), verificato su una gara a San Rocco di Piegara.
 
 const BASE = (process.env.FICR_BASE || "https://www.livetiming.ficr.it").replace(/\/+$/, "");
 const HOST_AMMESSI = new Set(["www.livetiming.ficr.it", "livetiming.ficr.it"]);
@@ -117,9 +120,14 @@ function tipoSessione(header) {
   return tipo.startsWith("qual") || nome.includes("qualific") || nome.includes("prov") ? "qualifica" : "gara";
 }
 
-function testoGap(t) {
+// Il testo da mostrare al posto di un distacco che non e' un tempo: un testo gia'
+// pronto dal sito, oppure, in gara e per i doppiati, "N giri" (campo u).
+function testoGap(t, giriIndietro, inGara) {
   const s = String(t == null ? "" : t).trim();
-  return !s || s === "--" || toSeconds(s) !== null ? "" : s;
+  if (s && s !== "--") return toSeconds(s) !== null ? "" : s;
+  if (!inGara) return "";
+  const giri = parseInt(giriIndietro, 10);
+  return Number.isFinite(giri) && giri > 0 ? `${giri} ${giri === 1 ? "giro" : "giri"}` : "";
 }
 
 function normalizza(slug, codice, dati) {
@@ -143,11 +151,12 @@ function normalizza(slug, codice, dati) {
       classe: String(r.y || "").trim(),
       giri: Number.isFinite(parseInt(r.j, 10)) ? parseInt(r.j, 10) : null,
       ultimoGiro: toSeconds(r.h),
+      tempoTotale: toSeconds(r.p),
       migliorGiro: toSeconds(r.m),
       distacco: toSeconds(r.s),
-      distaccoTesto: testoGap(r.s),
+      distaccoTesto: testoGap(r.s, r.u, tipo === "gara"),
       intervallo: toSeconds(r.t),
-      intervalloTesto: testoGap(r.t),
+      intervalloTesto: testoGap(r.t, r.u, tipo === "gara"),
       ordine: Number.isFinite(parseInt(r.q, 10)) ? parseInt(r.q, 10) : null,
     }))
     .sort((a, b) => a.pos - b.pos);
@@ -200,5 +209,5 @@ module.exports = {
   riconosce,
   leggi,
   grezzo,
-  _test: { leggiIndirizzo, normalizza, toSeconds, tipoSessione, vuoto },
+  _test: { leggiIndirizzo, normalizza, toSeconds, tipoSessione, vuoto, testoGap },
 };

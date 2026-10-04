@@ -73,8 +73,8 @@ async function classifica(){
     $('stato').innerHTML = '<span class="ok">Fornitore ' + d.fornitore + '</span> · ' + (d.evento.nome||d.evento.id) + ' · ' + (s.nome||'') + ' ' + (s.categoria||'') + ' · ' + (s.tipo||'') + (s.bandiera? ' · bandiera '+s.bandiera : '') + ' · ' + d.piloti.length + ' piloti';
     const n = $('numero').value.trim();
     const righe = d.piloti.filter(p => !n || p.numero === n || Math.abs(p.pos - ((d.piloti.find(x=>x.numero===n)||{}).pos||-99)) <= 1);
-    $('tab').innerHTML = '<table><tr><th>pos</th><th>n.</th><th>nome</th><th>miglior</th><th>interv.</th></tr>' +
-      righe.slice(0,12).map(p => '<tr><td>'+p.pos+'</td><td>'+p.numero+'</td><td>'+p.nome+'</td><td>'+formatta(p.migliorGiro)+'</td><td>'+(p.intervallo!=null?formatta(p.intervallo):(p.intervalloTesto||'—'))+'</td></tr>').join('') + '</table>';
+    $('tab').innerHTML = '<table><tr><th>pos</th><th>n.</th><th>nome</th><th>cat.</th><th>miglior</th><th>interv.</th></tr>' +
+      righe.slice(0,12).map(p => '<tr><td>'+p.pos+'</td><td>'+p.numero+'</td><td>'+p.nome+'</td><td>'+(p.classe||'')+'</td><td>'+formatta(p.migliorGiro)+'</td><td>'+(p.intervallo!=null?formatta(p.intervallo):(p.intervalloTesto||'—'))+'</td></tr>').join('') + '</table>';
   }catch(e){ mostra('Errore: ' + e.message); }
 }
 async function grezzo(){
