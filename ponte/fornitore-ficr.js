@@ -152,6 +152,7 @@ function normalizza(slug, codice, dati) {
       giri: Number.isFinite(parseInt(r.j, 10)) ? parseInt(r.j, 10) : null,
       ultimoGiro: toSeconds(r.h),
       tempoTotale: toSeconds(r.p),
+      giriRitardo: Number.isFinite(parseInt(r.u, 10)) ? parseInt(r.u, 10) : null,
       migliorGiro: toSeconds(r.m),
       distacco: toSeconds(r.s),
       distaccoTesto: testoGap(r.s, r.u, tipo === "gara"),
