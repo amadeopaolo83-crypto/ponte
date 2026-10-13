@@ -1,18 +1,52 @@
-// L'elenco dei traduttori. Per aggiungere un fornitore: scrivi un file
-// `fornitore-NOME.js` con la stessa forma di fornitore-ficr.js e aggiungilo qui.
+// L'elenco dei traduttori. Per aggiungere un fornitore basta caricare nella
+// cartella un file `fornitore-NOME.js` con la stessa forma di fornitore-ficr.js:
+// viene trovato da solo all'avvio, non serve piu' modificare questo file.
 //
 // Un traduttore espone:
 //   nome, descrizione
 //   riconosce(url)   vero se l'indirizzo e' di questo fornitore
 //   leggi(url)       la classifica nel formato comune (vedi README)
 //   grezzo(url)      la risposta originale del sito, per capire i problemi
+//
+// Un file rotto (errore di sintassi, forma sbagliata) viene saltato e scritto nei
+// log: gli altri traduttori continuano a funzionare.
 
-const FORNITORI = [
-  require("./fornitore-ficr"),
-];
+const fs = require("fs");
+const path = require("path");
+
+function caricaFornitori() {
+  const trovati = [];
+  let file = [];
+  try {
+    file = fs.readdirSync(__dirname).filter((f) => /^fornitore-.+\.js$/.test(f)).sort();
+  } catch (e) {
+    console.error("registro: cartella illeggibile:", e.message);
+  }
+  for (const f of file) {
+    try {
+      const m = require(path.join(__dirname, f));
+      const ok = m && typeof m.nome === "string" && m.nome
+        && typeof m.riconosce === "function" && typeof m.leggi === "function" && typeof m.grezzo === "function";
+      if (!ok) throw new Error("manca nome, riconosce, leggi o grezzo");
+      if (trovati.some((x) => x.nome === m.nome)) throw new Error(`nome "${m.nome}" gia' usato da un altro file`);
+      trovati.push(m);
+    } catch (e) {
+      console.error(`registro: ${f} saltato: ${e.message}`);
+    }
+  }
+  return trovati;
+}
+
+const FORNITORI = caricaFornitori();
 
 function trova(url) {
-  return FORNITORI.find((f) => f.riconosce(url)) || null;
+  return FORNITORI.find((f) => {
+    try {
+      return f.riconosce(url);
+    } catch (e) {
+      return false;
+    }
+  }) || null;
 }
 
 function parseEvento(testo) {

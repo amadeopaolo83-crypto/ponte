@@ -11,7 +11,7 @@ telefoni  ⇄  PitComm (app principale)  ⇄  PitPonte  ⇄  siti di live timing
 Se un fornitore cambia, o ne arriva uno nuovo, si aggiorna **solo il ponte**:
 PitComm resta acceso con carburante, gara e stato intatti.
 
-Oggi sa leggere: **FICR** (livetiming.ficr.it).
+Oggi sa leggere: **FICR** (livetiming.ficr.it) e **Aub** (l'API della squadra, vedi il punto 7).
 
 ## I file (tutti nella stessa cartella, senza sottocartelle)
 
@@ -19,8 +19,9 @@ Oggi sa leggere: **FICR** (livetiming.ficr.it).
 |---|---|
 | `package.json` | comando di avvio (nessuna libreria da installare) |
 | `server.js` | il servizio e le sue chiamate |
-| `registro.js` | l'elenco dei traduttori |
+| `registro.js` | trova da solo i file `fornitore-*.js` (un file rotto viene saltato e scritto nei log) |
 | `fornitore-ficr.js` | il traduttore per FICR |
+| `fornitore-aub.js` | il traduttore per Aub (usa la chiave della squadra) |
 | `rete.js` | lettura sicura di pagine esterne (strumento "sorgente") |
 | `pagina.html` | pagina di prova per il telefono |
 | `README.md` | questo file |
@@ -64,8 +65,8 @@ Con una gara in corso, dalla pagina di prova:
 2. Premi **Sorgente pagina**: mostra il codice della pagina, con l'elenco dei suoi
    file script e le righe che parlano di dati (`ajax`, `fetch`, `.php`, `.json`).
    **Copia il risultato** e mandalo nella chat.
-3. Con quello si scrive il nuovo traduttore (`fornitore-NOME.js` + una riga in
-   `registro.js`), si carica sul ponte e Render lo ripubblica. L'app principale
+3. Con quello si scrive il nuovo traduttore (basta il file `fornitore-NOME.js`: il
+   registro lo trova da solo), si carica sul ponte e Render lo ripubblica. L'app principale
    non si tocca: appena il ponte è di nuovo *Live*, la lettura riparte da sola.
 
 Lo strumento *Sorgente pagina* funziona solo con `BRIDGE_TOKEN` impostato e rifiuta
@@ -114,3 +115,43 @@ minuto: PitComm lo sa e aspetta.
 | *evento non ancora pubblicato* | L'evento non è nell'elenco del fornitore: riprova più tardi. |
 | Il ponte non risponde | Si sta svegliando (fino a un minuto) o è spento: controlla su Render. |
 | Dati strani in gara | Usa **Dati grezzi** e mandameli: il calcolo dei distacchi in gara va riscontrato. |
+
+## 7. Aub (API della squadra)
+
+Aub ha già le sue codifiche: il ponte non legge un sito, chiama la loro API di sola
+lettura con la **chiave della squadra** e traduce la risposta nel formato comune.
+
+**Cosa serve da Aub**: l'indirizzo del servizio (quello che il portale mostra quando
+crea la chiave) e una chiave con almeno gli ambiti `classifica`, `programma`, `gara`
+(`vetture` facoltativo; `persone` e `dirette` non servono e non vengono mai letti).
+
+**Impostare sul ponte (Render → Environment)**, mai nell'app e mai in chat:
+
+| Variabile | Valore |
+|---|---|
+| `AUB_BASE` | l'indirizzo del servizio, che deve iniziare con `https://` |
+| `AUB_KEY` | la chiave (inizia con `aubk_`) |
+| `AUB_TZ` | facoltativa: fuso orario del circuito (predefinito `Europe/Rome`) |
+
+**In PitComm** (Timing → Nostro) come indirizzo scrivi semplicemente `https://aub` e
+come numero quello della vettura. L'indirizzo serve solo a scegliere il traduttore:
+le chiamate vanno sempre a `AUB_BASE`.
+
+**Come viene tradotto**: `/classifica` dà posizione, numero, nome, categoria, giri,
+tempi, distacco dal primo (`gap`) e dall'auto davanti (`diff`); `/racetime` dice la
+fase in corso (PRACTICE, QUALI e WARMUP = `qualifica`; tutto il resto = `gara`);
+`/squadra` dà il nome della gara. Se la chiave non ha `programma` o `gara` la
+classifica funziona lo stesso (tipo `gara`, nome "Aub"). Nel risultato la vettura
+della squadra ha `"nostro": true` e il suo numero è in `evento.nostroNumero`.
+Una gara non aperta risponde `non_pubblicato`; dati non correnti (`stale`) danno un
+elenco vuoto. Rispetta i limiti di Aub (classifica ogni 2 s, fasi e squadra ogni
+30–60 s).
+
+| Messaggio | Cosa controllare |
+|---|---|
+| *Aub non è configurato sul ponte* | Mancano `AUB_BASE` o `AUB_KEY` su Render (o `AUB_BASE` non è https). |
+| `chiave_non_valida` (401) | Chiave sbagliata o revocata: chiedi alla squadra una chiave nuova. |
+| `ambito_mancante` (403) | La chiave non condivide `classifica`: il messaggio dice quali ambiti ha. |
+| *nessuna gara aperta* | Normale fuori dalla finestra della gara: l'app riprova da sola. |
+| Distacchi strani | **Dati grezzi** con `https://aub` e mandameli (senza persone né chiave). |
+
