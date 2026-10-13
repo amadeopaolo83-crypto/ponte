@@ -171,6 +171,49 @@ function leggiDistacco(v) {
   return { testo: s };
 }
 
+// Nei dati di prova di Aub `gap` e `diff` sono SCAMBIATI rispetto alla documentazione:
+// `gap` e' l'intervallo da chi sta davanti e `diff` il distacco cumulativo dal primo.
+// Per questo i nomi non bastano: si guarda come si comportano i numeri. Un distacco
+// cumulativo e' la somma degli intervalli: per ogni riga, cumulativo(k) - cumulativo(k-1)
+// e' uguale all'intervallo(k). La coppia di campi che lo verifica sulle righe e' quella
+// giusta. Se i dati non bastano a decidere, si tiene l'ultima scelta sicura, altrimenti
+// la lettura della documentazione (gap = dal primo, diff = da chi sta davanti).
+// (Stessa logica di PitComm, src/aubclassifica.js: se cambi una, cambia l'altra.)
+const TOLLERANZA = 0.0025; // arrotondamenti al millesimo
+let ultimaScelta = null; // "documento" | "scambiati"
+
+function capireCampi(righe) {
+  const sec = (v) => {
+    const d = leggiDistacco(v);
+    return d.sec != null ? d.sec : null;
+  };
+  const v = righe
+    .map((r) => ({ pos: parseInt(r.pos, 10), g: sec(r.gap), d: sec(r.diff) }))
+    .filter((r) => Number.isFinite(r.pos))
+    .sort((x, y) => x.pos - y.pos);
+  let documento = 0; // gap cumulativo, diff intervallo
+  let scambiati = 0; // diff cumulativo, gap intervallo
+  let suG = 0, parG = 0, suD = 0, parD = 0;
+  for (let k = 1; k < v.length; k++) {
+    const p = v[k - 1], r = v[k];
+    if (p.g !== null && r.g !== null && r.d !== null && r.d > 0 && Math.abs(r.g - p.g - r.d) <= TOLLERANZA) documento++;
+    if (p.d !== null && r.d !== null && r.g !== null && r.g > 0 && Math.abs(r.d - p.d - r.g) <= TOLLERANZA) scambiati++;
+    if (p.g !== null && r.g !== null) { parG++; if (r.g >= p.g) suG++; }
+    if (p.d !== null && r.d !== null) { parD++; if (r.d >= p.d) suD++; }
+  }
+  let scelta = null;
+  if (documento >= 2 && documento > scambiati) scelta = "documento";
+  else if (scambiati >= 2 && scambiati > documento) scelta = "scambiati";
+  else if (parG >= 4 && parD >= 4) {
+    // Secondo indizio: il campo cumulativo non scende quasi mai, l'intervallo si'.
+    const rG = suG / parG, rD = suD / parD;
+    if (rD >= 0.7 && rD >= rG + 0.25) scelta = "scambiati";
+    else if (rG >= 0.7 && rG >= rD + 0.25) scelta = "documento";
+  }
+  if (scelta) ultimaScelta = scelta;
+  return scelta || ultimaScelta || "documento";
+}
+
 // Orario locale del circuito come "2026-10-11T15:26:00" (le fasi di Aub sono
 // scritte cosi', senza fuso).
 function oraLocale(adesso) {
@@ -207,14 +250,21 @@ function normalizza(classifica, fasi, squadra, adesso = new Date()) {
   const tipo = FASI_QUALIFICA.has(nomeFase) ? "qualifica" : "gara";
 
   const righe = Array.isArray(classifica.full_classification_json) ? classifica.full_classification_json : [];
+  const valide = righe.filter((r) => r && typeof r === "object" && Number.isFinite(parseInt(r.pos, 10)));
+  // Quale campo e' il distacco dal primo e quale l'intervallo da chi sta davanti.
+  const scambiati = valide.length > 0 && capireCampi(valide) === "scambiati";
+  const campoCumulativo = scambiati ? "diff" : "gap";
+  const campoIntervallo = scambiati ? "gap" : "diff";
+  const primo = valide.reduce((m, r) => (m === null || parseInt(r.pos, 10) < parseInt(m.pos, 10) ? r : m), null);
+  const giriPrimo = primo ? intero(primo.laps) : null;
   let nostroNumero = "";
-  const piloti = righe
-    .filter((r) => r && typeof r === "object" && Number.isFinite(parseInt(r.pos, 10)))
+  const piloti = valide
     .map((r) => {
       const pos = parseInt(r.pos, 10);
-      const gap = leggiDistacco(r.gap);
-      const diff = leggiDistacco(r.diff);
+      const cum = leggiDistacco(r[campoCumulativo]);
+      const inter = leggiDistacco(r[campoIntervallo]);
       const numero = String(r.number == null ? "" : r.number).trim();
+      const giri = intero(r.laps);
       if (r.myself === true && !nostroNumero) nostroNumero = numero;
       return {
         pos,
@@ -222,17 +272,18 @@ function normalizza(classifica, fasi, squadra, adesso = new Date()) {
         numero,
         nome: String(r.name || "").trim(),
         classe: String(r.category || "").trim(),
-        giri: intero(r.laps),
+        giri,
         ultimoGiro: toSeconds(r.laptime),
         tempoTotale: null,
-        // Aub dice a ognuno quanto e' dietro al primo: in giri se doppiato, altrimenti
-        // a tempo (cioe' sullo stesso giro, 0). Senza dato, solo il primo vale 0.
-        giriRitardo: gap.giri != null ? gap.giri : gap.sec != null ? 0 : pos === 1 ? 0 : null,
+        // Quanti giri ha dal primo, dai giri completati: le scritte dei distacchi per i
+        // doppiati non sono coerenti fra i due campi. Senza giri, dalla scritta.
+        giriRitardo: giriPrimo !== null && giri !== null ? Math.max(0, giriPrimo - giri)
+          : cum.giri != null ? cum.giri : cum.sec != null ? 0 : pos === 1 ? 0 : null,
         migliorGiro: toSeconds(r.bestlap),
-        distacco: gap.sec != null ? gap.sec : null,
-        distaccoTesto: gap.sec != null ? "" : gap.testo || "",
-        intervallo: diff.sec != null ? diff.sec : null,
-        intervalloTesto: diff.sec != null ? "" : diff.testo || "",
+        distacco: cum.sec != null ? cum.sec : null,
+        distaccoTesto: cum.sec != null ? "" : cum.testo || "",
+        intervallo: pos === 1 ? null : inter.sec != null ? inter.sec : null,
+        intervalloTesto: inter.sec != null ? "" : inter.testo || "",
         ordine: null,
         nostro: r.myself === true,
       };
@@ -313,5 +364,5 @@ module.exports = {
   riconosce,
   leggi,
   grezzo,
-  _test: { toSeconds, leggiDistacco, faseCorrente, oraLocale, normalizza, configurazione, riconosce, memoria },
+  _test: { toSeconds, leggiDistacco, capireCampi, _reset: () => { ultimaScelta = null; }, faseCorrente, oraLocale, normalizza, configurazione, riconosce, memoria },
 };
