@@ -182,15 +182,65 @@ function leggiDistacco(v) {
 const TOLLERANZA = 0.0025; // arrotondamenti al millesimo
 let ultimaScelta = null; // "documento" | "scambiati"
 
+// Distacco con segno: "-00:36.144" -> -36.144, "+12.4" -> 12.4, altro -> null.
+function firmato(v) {
+  const t = String(v == null ? "" : v).trim().replace(/^[\u2212\u2013]/, "-");
+  const d = leggiDistacco(t.replace(/^-/, ""));
+  if (d.sec == null) return null;
+  return t.startsWith("-") ? -d.sec : d.sec;
+}
+
+// Un campo e' "cumulativo" (una posizione su un asse del tempo) quando i suoi valori,
+// in ordine di classifica, vanno sempre nella stessa direzione: l'intervallo da chi sta
+// davanti e' allora la differenza fra due righe. Due varianti: dal primo (crescente) o da
+// una vettura di riferimento, di solito la nostra (positivo davanti, zero su di noi,
+// negativo dietro).
+function andamento(valori) {
+  let n = 0, su = 0, giu = 0, ultimo = null, min = Infinity, max = -Infinity;
+  for (const x of valori) {
+    if (x === null) continue;
+    if (ultimo !== null) {
+      n++;
+      if (x >= ultimo - TOLLERANZA) su++;
+      if (x <= ultimo + TOLLERANZA) giu++;
+    }
+    ultimo = x;
+    if (x < min) min = x;
+    if (x > max) max = x;
+  }
+  return { n, su, giu, ampiezza: max - min };
+}
+
+function relativoANoi(v, campo) {
+  const i = v.findIndex((r) => r.mio);
+  if (i <= 0) return false;
+  const x = (r) => r[campo];
+  if (x(v[i]) === null || Math.abs(x(v[i])) > 0.0005) return false;
+  let coerenti = 0, totale = 0;
+  for (let k = 0; k < v.length; k++) {
+    if (k === i || x(v[k]) === null || Math.abs(x(v[k])) <= 0.0005) continue;
+    totale++;
+    const davanti = k < i;
+    if ((davanti && x(v[k]) > 0) || (!davanti && x(v[k]) < 0)) coerenti++;
+  }
+  return totale >= 2 && coerenti / totale >= 0.7 && coerenti >= 2;
+}
+
+// Ritorna "documento" | "scambiati" | "cumGap" | "cumDiff".
 function capireCampi(righe) {
   const sec = (v) => {
     const d = leggiDistacco(v);
     return d.sec != null ? d.sec : null;
   };
   const v = righe
-    .map((r) => ({ pos: parseInt(r.pos, 10), g: sec(r.gap), d: sec(r.diff) }))
+    .map((r) => ({ pos: parseInt(r.pos, 10), g: sec(r.gap), d: sec(r.diff), gs: firmato(r.gap), ds: firmato(r.diff), mio: r.myself === true }))
     .filter((r) => Number.isFinite(r.pos))
     .sort((x, y) => x.pos - y.pos);
+  // 1) misurato da noi: zero sulla nostra riga, segni opposti davanti e dietro.
+  const relativo = relativoANoi(v.map((r) => ({ mio: r.mio, f: r.gs })), "f") ? "cumGap"
+    : relativoANoi(v.map((r) => ({ mio: r.mio, f: r.ds })), "f") ? "cumDiff" : null;
+  if (relativo) { ultimaScelta = relativo; return relativo; }
+
   let documento = 0; // gap cumulativo, diff intervallo
   let scambiati = 0; // diff cumulativo, gap intervallo
   let suG = 0, parG = 0, suD = 0, parD = 0;
@@ -204,11 +254,18 @@ function capireCampi(righe) {
   let scelta = null;
   if (documento >= 2 && documento > scambiati) scelta = "documento";
   else if (scambiati >= 2 && scambiati > documento) scelta = "scambiati";
-  else if (parG >= 4 && parD >= 4) {
-    // Secondo indizio: il campo cumulativo non scende quasi mai, l'intervallo si'.
-    const rG = suG / parG, rD = suD / parD;
-    if (rD >= 0.7 && rD >= rG + 0.25) scelta = "scambiati";
-    else if (rG >= 0.7 && rG >= rD + 0.25) scelta = "documento";
+  else {
+    // 2) un solo campo sempre nella stessa direzione (con segno): e' il cumulativo.
+    const aG = andamento(v.map((r) => r.gs)), aD = andamento(v.map((r) => r.ds));
+    const monotono = (a) => a.n >= 4 && a.ampiezza > 1 && Math.max(a.su, a.giu) / a.n >= 0.85;
+    if (monotono(aG) && !monotono(aD)) scelta = "cumGap";
+    else if (monotono(aD) && !monotono(aG)) scelta = "cumDiff";
+    else if (parG >= 4 && parD >= 4) {
+      // 3) secondo indizio: il campo cumulativo non scende quasi mai, l'intervallo si'.
+      const rG = suG / parG, rD = suD / parD;
+      if (rD >= 0.7 && rD >= rG + 0.25) scelta = "scambiati";
+      else if (rG >= 0.7 && rG >= rD + 0.25) scelta = "documento";
+    }
   }
   if (scelta) ultimaScelta = scelta;
   return scelta || ultimaScelta || "documento";
@@ -252,9 +309,18 @@ function normalizza(classifica, fasi, squadra, adesso = new Date()) {
   const righe = Array.isArray(classifica.full_classification_json) ? classifica.full_classification_json : [];
   const valide = righe.filter((r) => r && typeof r === "object" && Number.isFinite(parseInt(r.pos, 10)));
   // Quale campo e' il distacco dal primo e quale l'intervallo da chi sta davanti.
-  const scambiati = valide.length > 0 && capireCampi(valide) === "scambiati";
-  const campoCumulativo = scambiati ? "diff" : "gap";
+  const modo = valide.length > 0 ? capireCampi(valide) : "documento";
+  const scambiati = modo === "scambiati";
+  const campoCumulativo = modo === "cumDiff" || scambiati ? "diff" : "gap";
   const campoIntervallo = scambiati ? "gap" : "diff";
+  // Distacco misurato da un riferimento (modi cumGap / cumDiff): l'intervallo di una riga
+  // e' la distanza dalla riga che la precede, e il valore con segno si manda anche ai
+  // telefoni (`cumulativo`) per calcolare la distanza fra due piloti qualsiasi.
+  const dalRiferimento = modo === "cumGap" || modo === "cumDiff";
+  const ordinate = [...valide].sort((x, y) => parseInt(x.pos, 10) - parseInt(y.pos, 10));
+  const cumFirmato = new Map(ordinate.map((r) => [r, dalRiferimento ? firmato(r[campoCumulativo]) : null]));
+  const precedente = new Map(ordinate.map((r, k) => [r, k > 0 ? ordinate[k - 1] : null]));
+  const distanza = (a, b) => (typeof a === "number" && typeof b === "number" ? Math.round(Math.abs(a - b) * 1000) / 1000 : null);
   const primo = valide.reduce((m, r) => (m === null || parseInt(r.pos, 10) < parseInt(m.pos, 10) ? r : m), null);
   const giriPrimo = primo ? intero(primo.laps) : null;
   let nostroNumero = "";
@@ -282,8 +348,11 @@ function normalizza(classifica, fasi, squadra, adesso = new Date()) {
         migliorGiro: toSeconds(r.bestlap),
         distacco: cum.sec != null ? cum.sec : null,
         distaccoTesto: cum.sec != null ? "" : cum.testo || "",
-        intervallo: pos === 1 ? null : inter.sec != null ? inter.sec : null,
-        intervalloTesto: inter.sec != null ? "" : inter.testo || "",
+        intervallo: pos === 1 ? null
+          : dalRiferimento ? distanza(cumFirmato.get(r), cumFirmato.get(precedente.get(r)))
+          : inter.sec != null ? inter.sec : null,
+        intervalloTesto: dalRiferimento || inter.sec != null ? "" : inter.testo || "",
+        cumulativo: dalRiferimento ? cumFirmato.get(r) : null,
         ordine: null,
         nostro: r.myself === true,
       };
